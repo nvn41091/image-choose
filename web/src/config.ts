@@ -16,7 +16,7 @@ export function getConfig(): Config {
       local.googleClientId ??
       (import.meta.env.VITE_GOOGLE_CLIENT_ID ||
         '40087392130-d9qquuudeqt0dfc715u0sg8tllh91lvt.apps.googleusercontent.com'),
-    googleApiKey: local.googleApiKey ?? import.meta.env.VITE_GOOGLE_API_KEY ?? '',
+    googleApiKey: local.googleApiKey?.trim() || import.meta.env.VITE_GOOGLE_API_KEY || '',
     firebaseConfig:
       local.firebaseConfig ??
       (import.meta.env.VITE_FIREBASE_CONFIG ||

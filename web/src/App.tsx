@@ -1882,6 +1882,7 @@ function App({ account }: { account: Account }) {
               Google API key (tùy chọn, thư mục công khai)
               <input
                 value={config.googleApiKey}
+                placeholder="Để trống để dùng key được cấu hình khi deploy"
                 onChange={(e) => setConfig({ ...config, googleApiKey: e.target.value })}
               />
             </label>
