@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ImageOff, LoaderCircle, RotateCw } from 'lucide-react';
 import { imageBlob } from './images';
+import { DRIVE_SESSION_EVENT } from './drive';
 import type { Album, Entry } from './model';
 
 export function PhotoImage({
@@ -17,6 +18,12 @@ export function PhotoImage({
   const [src, setSrc] = useState('');
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (album.source !== 'drive') return;
+    const reconnect = () => setRetry((value) => value + 1);
+    window.addEventListener(DRIVE_SESSION_EVENT, reconnect);
+    return () => window.removeEventListener(DRIVE_SESSION_EVENT, reconnect);
+  }, [album.id, album.source]);
   useEffect(() => {
     if (full) return;
     const observer = new IntersectionObserver(

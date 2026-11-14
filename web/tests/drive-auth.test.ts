@@ -34,7 +34,7 @@ function mockGoogle(granted = true, popupError = '') {
     ),
     hasGrantedAllScopes: vi.fn(() => granted),
   };
-  vi.stubGlobal('window', { google: { accounts: { oauth2: oauth } } });
+  vi.stubGlobal('window', { dispatchEvent: vi.fn(), google: { accounts: { oauth2: oauth } } });
   return oauth;
 }
 

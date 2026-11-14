@@ -1,5 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;450;500;550;600;650;700&family=Playfair+Display:wght@500;600&display=swap');
 
+.drive-reconnect {
+  margin: 0 0 20px;
+}
+
 :root {
   font-family: 'Be Vietnam Pro', system-ui, sans-serif;
   color: #303b34;

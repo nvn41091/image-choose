@@ -910,6 +910,29 @@ function App() {
             </div>
             {album && (
               <>
+                {album.source === 'drive' && !googleConnected && driveNeedsLogin() && (
+                  <div className="connection-card drive-reconnect">
+                    <Cloud size={24} />
+                    <div>
+                      <strong>Kết nối Google Drive để tải ảnh</strong>
+                      <small>
+                        Lựa chọn đã lưu vẫn được giữ. Kết nối lại để tiếp tục xem ảnh trên thiết bị
+                        này.
+                      </small>
+                    </div>
+                    <button
+                      className="button primary"
+                      onClick={() =>
+                        void run('Đang kết nối Google Drive…', async () => {
+                          await signInDrive();
+                          setGoogleConnected(driveSignedIn());
+                        })
+                      }
+                    >
+                      Kết nối lại Google Drive
+                    </button>
+                  </div>
+                )}
                 <section className="package-bar">
                   <div className="package-label">
                     <span className="tiny-icon">

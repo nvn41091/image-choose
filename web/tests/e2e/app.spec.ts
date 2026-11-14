@@ -37,6 +37,21 @@ test('opening a Drive link requests consent before reading any files', async ({ 
   await expect(page.locator('.photo-card')).toHaveCount(1);
   expect(requests.length).toBeGreaterThanOrEqual(2);
   expect(requests.every((r) => r.authorization === 'Bearer test-drive-token')).toBe(true);
+  await expect(page.locator('.gallery-footer')).toContainText('Đã lưu trên thiết bị');
+  await page.reload();
+  await page.waitForFunction(() => Boolean((window as unknown as { google?: unknown }).google));
+  await expect(
+    page.getByRole('button', { name: 'Kết nối lại Google Drive', exact: true }),
+  ).toBeVisible();
+  const beforeReconnect = requests.length;
+  await page.getByRole('button', { name: 'Kết nối lại Google Drive', exact: true }).click();
+  await page.evaluate(() =>
+    (window as unknown as { grantTestDriveConsent: () => void }).grantTestDriveConsent(),
+  );
+  await expect(
+    page.getByRole('button', { name: 'Kết nối lại Google Drive', exact: true }),
+  ).toHaveCount(0);
+  await expect.poll(() => requests.length).toBeGreaterThan(beforeReconnect);
 });
 
 test('sync remains accessible when the mobile header hides its text', async ({ page }) => {

@@ -10,6 +10,7 @@ import {
 import { getConfig } from './config';
 
 const scope = 'https://www.googleapis.com/auth/drive.readonly';
+export const DRIVE_SESSION_EVENT = 'drive-session-connected';
 let accessToken = '',
   expiresAt = 0;
 let gis: Promise<void> | undefined;
@@ -90,6 +91,7 @@ export function signInDrive(): Promise<void> {
             return reject(new Error('Google chưa trả về phiên Drive hợp lệ. Hãy kết nối lại.'));
           accessToken = reply.access_token;
           expiresAt = Date.now() + Number(reply.expires_in) * 1000 - 30000;
+          window.dispatchEvent(new Event(DRIVE_SESSION_EVENT));
           resolve();
         },
         error_callback: (error) =>
