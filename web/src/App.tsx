@@ -54,7 +54,15 @@ import {
   saveAlbum,
   saveRecovery,
 } from './storage';
-import { driveSignedIn, loadDrive, prepareDriveLogin, signInDrive, signOutDrive } from './drive';
+import {
+  driveNeedsLogin,
+  driveSignedIn,
+  loadDrive,
+  parseDriveUrl,
+  prepareDriveLogin,
+  signInDrive,
+  signOutDrive,
+} from './drive';
 import {
   copyByCategory,
   createBackup,
@@ -313,6 +321,7 @@ function App() {
     }
   };
   const openDrive = () => {
+    setGoogleConnected(driveSignedIn());
     setDriveUrl(album?.driveUrl || '');
     setAttach(false);
     setDialog('drive');
@@ -1664,6 +1673,13 @@ function App() {
               onSubmit={(e) => {
                 e.preventDefault();
                 void run('Đang đọc Google Drive…', async () => {
+                  parseDriveUrl(driveUrl);
+                  if (driveNeedsLogin()) {
+                    setBusy('Đang kết nối Google để đọc bộ ảnh…');
+                    await signInDrive();
+                    setGoogleConnected(driveSignedIn());
+                    setBusy('Đang đọc Google Drive…');
+                  }
                   abort.current = new AbortController();
                   try {
                     const result = await loadDrive(driveUrl, abort.current.signal, setBusy);
@@ -1711,7 +1727,7 @@ function App() {
                 <Cloud size={24} />
                 <div>
                   <strong>
-                    {googleConnected ? 'Đã kết nối Google' : 'Drive riêng tư cần kết nối Google'}
+                    {googleConnected ? 'Đã kết nối Google Drive' : 'Đăng nhập Google để mở bộ ảnh'}
                   </strong>
                   <small>Chỉ xin quyền đọc. Không đổi tên, sửa hoặc xóa ảnh trên Drive.</small>
                 </div>
@@ -1737,8 +1753,13 @@ function App() {
                 </button>
               </div>
               <p className="hint">
-                Thư mục công khai có thể mở bằng API key trong Cấu hình. Tài khoản đăng nhập cần có
-                quyền đọc thư mục.
+                Nút mở ảnh sẽ yêu cầu kết nối Google nếu bạn chưa cấp quyền Drive. Đăng nhập ở mục
+                Đồng bộ Firebase chỉ đồng bộ lựa chọn, chưa cấp quyền đọc ảnh. Thư mục công khai
+                cũng có thể mở bằng API key trong Cấu hình.
+              </p>
+              <p className="hint">
+                Nếu Google chặn đăng nhập trong trình duyệt nhúng của ứng dụng, hãy mở website này
+                bằng Chrome hoặc Safari. Tài khoản Google cần có quyền đọc thư mục.
               </p>
               <div className="dialog-actions">
                 <button
@@ -1753,7 +1774,7 @@ function App() {
                 </button>
                 <button className="button primary" type="submit">
                   <FolderOpen size={16} />
-                  Mở bộ ảnh
+                  {driveNeedsLogin() ? 'Kết nối Google & mở ảnh' : 'Mở bộ ảnh'}
                 </button>
               </div>
             </form>

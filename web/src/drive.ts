@@ -24,7 +24,7 @@ interface GoogleOAuth {
     client_id: string;
     scope: string;
     callback: (r: TokenReply) => void;
-    error_callback: () => void;
+    error_callback: (error: { type: string }) => void;
   }): { requestAccessToken(config: { prompt: string }): void };
   hasGrantedAllScopes(reply: TokenReply, scope: string): boolean;
   revoke(token: string, callback: () => void): void;
@@ -53,6 +53,9 @@ export function prepareDriveLogin() {
 export function driveSignedIn() {
   return !!accessToken && Date.now() < expiresAt;
 }
+export function driveNeedsLogin() {
+  return !driveSignedIn() && (!!accessToken || !getConfig().googleApiKey.trim());
+}
 export function signInDrive(): Promise<void> {
   const id = getConfig().googleClientId.trim();
   if (!id) return Promise.reject(new Error('Mở Cấu hình để nhập Google OAuth Client ID.'));
@@ -70,15 +73,32 @@ export function signInDrive(): Promise<void> {
         client_id: id,
         scope,
         callback: (reply) => {
-          if (reply.error || !oauth.hasGrantedAllScopes(reply, scope))
-            return reject(new Error('Chưa được cấp quyền đọc Google Drive.'));
+          if (reply.error || !oauth.hasGrantedAllScopes(reply, scope)) {
+            accessToken = '';
+            expiresAt = 0;
+            return reject(
+              new Error(
+                'Bạn chưa cấp quyền đọc Google Drive. Kết nối lại và đồng ý quyền xem các tệp Drive.',
+              ),
+            );
+          }
+          if (
+            !reply.access_token ||
+            !Number.isFinite(Number(reply.expires_in)) ||
+            Number(reply.expires_in) <= 30
+          )
+            return reject(new Error('Google chưa trả về phiên Drive hợp lệ. Hãy kết nối lại.'));
           accessToken = reply.access_token;
           expiresAt = Date.now() + Number(reply.expires_in) * 1000 - 30000;
           resolve();
         },
-        error_callback: () =>
+        error_callback: (error) =>
           reject(
-            new Error('Cửa sổ đăng nhập bị đóng hoặc bị chặn. Hãy cho phép popup rồi thử lại.'),
+            new Error(
+              error.type === 'popup_closed'
+                ? 'Bạn đã đóng cửa sổ đăng nhập. Bấm kết nối Google khi muốn tiếp tục.'
+                : 'Không mở được đăng nhập Google. Hãy cho phép popup; nếu đang dùng trình duyệt trong ứng dụng, mở website bằng Chrome hoặc Safari rồi thử lại.',
+            ),
           ),
       })
       .requestAccessToken({ prompt: '' });

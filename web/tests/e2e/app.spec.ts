@@ -1,6 +1,44 @@
 import { test, expect } from '@playwright/test';
 import { blankProject, updatePhotos } from '../../src/model';
 
+test('opening a Drive link requests consent before reading any files', async ({ page }) => {
+  const requests: { authorization: string | undefined }[] = [];
+  await page.route('https://accounts.google.com/gsi/client', (route) =>
+    route.fulfill({
+      contentType: 'application/javascript',
+      body: `window.google = {accounts: {oauth2: {
+      initTokenClient(options) {return {requestAccessToken() {
+        window.grantTestDriveConsent = () => options.callback({access_token: 'test-drive-token', expires_in: 3600, scope: 'https://www.googleapis.com/auth/drive.readonly'});
+      }};}, hasGrantedAllScopes() {return true;}
+    }}};`,
+    }),
+  );
+  await page.route('https://www.googleapis.com/drive/v3/**', async (route) => {
+    requests.push({ authorization: route.request().headers().authorization });
+    const url = new URL(route.request().url());
+    await route.fulfill({
+      json: url.pathname.endsWith('/files/folder123')
+        ? { id: 'folder123', name: 'Drive test', mimeType: 'application/vnd.google-apps.folder' }
+        : { files: [{ id: 'photo123', name: 'test.jpg', mimeType: 'image/jpeg' }] },
+    });
+  });
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean((window as unknown as { google?: unknown }).google));
+  await page.getByRole('button', { name: 'Mở link Google Drive', exact: true }).last().click();
+  await page
+    .getByLabel('Link Google Drive')
+    .fill('https://drive.google.com/drive/folders/folder123');
+  await page.getByRole('button', { name: 'Kết nối Google & mở ảnh', exact: true }).click();
+  await expect(page.locator('.modal-busy')).toContainText('Đang kết nối Google');
+  expect(requests).toHaveLength(0);
+  await page.evaluate(() =>
+    (window as unknown as { grantTestDriveConsent: () => void }).grantTestDriveConsent(),
+  );
+  await expect(page.locator('.photo-card')).toHaveCount(1);
+  expect(requests.length).toBeGreaterThanOrEqual(2);
+  expect(requests.every((r) => r.authorization === 'Bearer test-drive-token')).toBe(true);
+});
+
 test('sync remains accessible when the mobile header hides its text', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Đồng bộ', exact: true }).click();
@@ -102,6 +140,6 @@ test('Google connection config is public client ID only and Drive rejects foreig
   await page.getByRole('button', { name: 'Đóng', exact: true }).click();
   await page.getByRole('button', { name: 'Mở link Google Drive', exact: true }).last().click();
   await page.getByLabel('Link Google Drive').fill('https://example.com/folders/12345');
-  await page.getByRole('button', { name: 'Mở bộ ảnh', exact: true }).click();
+  await page.locator('dialog button[type="submit"]').click();
   await expect(page.getByRole('alert')).toContainText('Chỉ nhận link');
 });

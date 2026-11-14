@@ -56,6 +56,8 @@ Trong Google Cloud project `image-choose`:
 3. Cấu hình OAuth consent screen, scope `https://www.googleapis.com/auth/drive.readonly`. Trong chế độ Testing, thêm email sử dụng vào Test users. Tài khoản đó cần được chia sẻ quyền đọc thư mục Drive. Khi phát hành rộng, làm quy trình xác minh scope của Google nếu được yêu cầu.
 4. Nếu dùng API key công khai: giới hạn API key theo **Google Drive API**, HTTP referrers `https://nvn41091.github.io/*` và localhost khi cần. API key không giúp truy cập Drive riêng tư. Firebase API key mặc định không tự được dùng làm Drive API key.
 
+Khi chưa kết nối Drive và chưa cấu hình API key, nút **Kết nối Google & mở ảnh** sẽ mở đăng nhập Google ngay từ lần bấm đó, chờ người dùng đồng ý quyền đọc rồi mới quét thư mục. Đăng nhập trong mục Đồng bộ Firebase chưa cấp quyền Drive. Khi token hết hạn, lần mở tiếp theo yêu cầu kết nối lại; token không được lưu vào localStorage hoặc backup. Nếu Google chặn trình duyệt nhúng của ứng dụng, mở website trực tiếp bằng Chrome/Safari và cho phép popup.
+
 [Google GIS token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model), [Drive files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list), [Drive resource keys](https://developers.google.com/workspace/drive/api/guides/resource-keys).
 
 ## Thiết lập Firebase đồng bộ (không cần server riêng)
