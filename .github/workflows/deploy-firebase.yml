@@ -1,0 +1,40 @@
+name: Deploy optional Firebase backend
+on:
+  workflow_dispatch:
+    inputs:
+      include_ai:
+        description: Deploy AI function too (Blaze and OPENAI_API_KEY secret required)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: firebase-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - run: npm ci --prefix firebase/functions
+      - run: npm test --prefix firebase/functions
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.FIREBASE_WIF_PROVIDER }}
+          service_account: ${{ vars.FIREBASE_DEPLOY_SERVICE_ACCOUNT }}
+      - name: Write AI configuration
+        if: inputs.include_ai
+        env:
+          AI_ALLOWED_UIDS: ${{ vars.AI_ALLOWED_UIDS }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("firebase/functions/.env.image-choose", "AI_ALLOWED_UIDS=" + process.env.AI_ALLOWED_UIDS + "\nAI_DAILY_BATCH_LIMIT=20\n")'
+      - name: Deploy rules
+        if: ${{ !inputs.include_ai }}
+        run: npx firebase-tools@14 deploy --only firestore:rules --project image-choose --non-interactive
+      - name: Deploy rules and AI
+        if: inputs.include_ai
+        run: npx firebase-tools@14 deploy --only firestore:rules,functions:photo-review --project image-choose --non-interactive
