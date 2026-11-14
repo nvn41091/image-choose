@@ -17,6 +17,14 @@ service cloud.firestore {
       allow update: if owner() && valid() && request.resource.data.revision == resource.data.revision + 1;
       allow delete: if owner();
     }
+    match /users/{uid}/settings/workspace {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['activeAlbumId', 'updatedAt'])
+        && request.resource.data.activeAlbumId is string
+        && request.resource.data.activeAlbumId.size() <= 300
+        && request.resource.data.updatedAt == request.time;
+    }
     match /{document=**} { allow read, write: if false; }
   }
 }

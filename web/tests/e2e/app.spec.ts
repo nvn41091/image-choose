@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { blankProject, updatePhotos } from '../../src/model';
+import { mockSession } from './mocks';
+test.beforeEach(async ({ page }) => {
+  await mockSession(page);
+});
 
 test('opening a Drive link requests consent before reading any files', async ({ page }) => {
   const requests: { authorization: string | undefined }[] = [];
@@ -37,7 +41,7 @@ test('opening a Drive link requests consent before reading any files', async ({ 
   await expect(page.locator('.photo-card')).toHaveCount(1);
   expect(requests.length).toBeGreaterThanOrEqual(2);
   expect(requests.every((r) => r.authorization === 'Bearer test-drive-token')).toBe(true);
-  await expect(page.locator('.gallery-footer')).toContainText('Đã lưu trên thiết bị');
+  await expect(page.locator('.gallery-footer')).toContainText('Đã đồng bộ Firebase');
   await page.reload();
   await page.waitForFunction(() => Boolean((window as unknown as { google?: unknown }).google));
   await expect(
@@ -57,10 +61,8 @@ test('opening a Drive link requests consent before reading any files', async ({ 
 test('sync remains accessible when the mobile header hides its text', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Đồng bộ', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Tiếp tục trên mọi thiết bị' })).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Đăng nhập Google để đồng bộ', exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Đồng bộ tự động' })).toBeVisible();
+  await expect(page.getByText('test-user@example.com', { exact: true }).last()).toBeVisible();
 });
 
 test('restore PC choices, select, compare, save, export and reopen', async ({ page }, testInfo) => {
@@ -120,7 +122,7 @@ test('restore PC choices, select, compare, save, export and reopen', async ({ pa
   await page.getByRole('button', { name: 'Tải gói studio', exact: true }).click();
   await (await studioDownload).saveAs(testInfo.outputPath('studio.zip'));
   await page.getByRole('button', { name: 'Đóng', exact: true }).click();
-  await expect(page.locator('.gallery-footer')).toContainText('Đã lưu trên thiết bị');
+  await expect(page.locator('.gallery-footer')).toContainText('Đã đồng bộ Firebase');
   await page.reload();
   await expect(page.locator('.photo-card')).toHaveCount(2);
   await expect(page.locator('.package-label')).toContainText('2 khoảnh khắc');
@@ -135,6 +137,7 @@ test('blocks a second tab to avoid overwriting local choices', async ({ page, co
   await page.goto('/');
   await expect(page.locator('.welcome')).toBeVisible();
   const second = await context.newPage();
+  await mockSession(second);
   await second.goto('/');
   await expect(second.getByRole('alert')).toContainText('đang mở ở một tab khác');
   await page.close();

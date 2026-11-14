@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { expect, it } from 'vitest';
 import { blankProject, type Album } from '../src/model';
+import { setStorageUser } from '../src/storage';
 import {
   deleteAlbum,
   getBlob,
@@ -11,6 +12,7 @@ import {
 } from '../src/storage';
 
 it('atomically stores local backup images, preserves a recovery snapshot and deletes just its own blobs', async () => {
+  setStorageUser('storage-test');
   const album: Album = {
     id: 'one',
     name: 'test',
@@ -28,4 +30,22 @@ it('atomically stores local backup images, preserves a recovery snapshot and del
   expect(await getBlob('one', 'sub/a.jpg')).toBeUndefined();
   expect(await (await getBlob('two', 'sub/a.jpg'))?.text()).toBe('two');
   expect((await listAlbums()).map((a) => a.id)).toEqual(['two']);
+});
+it('isolates choices and image blobs by authenticated account', async () => {
+  setStorageUser('owner-a');
+  const a: Album = {
+    id: 'same',
+    name: 'Private',
+    source: 'local',
+    entries: [],
+    project: blankProject(),
+    updatedAt: '',
+  };
+  await importLocalAlbum(a, new Map([['a.jpg', new Blob(['private'])]]));
+  setStorageUser('owner-b');
+  expect(await listAlbums()).toEqual([]);
+  expect(await getBlob('same', 'a.jpg')).toBeUndefined();
+  setStorageUser('owner-a');
+  expect((await listAlbums())[0].name).toBe('Private');
+  expect(await (await getBlob('same', 'a.jpg'))?.text()).toBe('private');
 });

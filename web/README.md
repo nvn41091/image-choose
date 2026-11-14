@@ -25,7 +25,8 @@ Mở `http://localhost:5173`. `npm test`, `npm run build` kiểm tra dữ liệu
 - Backup ZIP/JSON tương thích PC hai chiều; giữ đường dẫn, điểm 0, sao, ghi chú, gói và các bản ghi chưa khớp. Có kiểm tra ZIP và xem trước số ảnh/bản ghi, giữ một bản trước khi thay dữ liệu.
 - Nhập thư mục/ảnh từ máy vào IndexedDB, xem lại không cần chọn lại tệp; backup kèm ảnh nhập thành bộ mới.
 - Tải ảnh đã chọn hoặc RAW đã khớp thành ZIP chia theo loại. RAW ưu tiên đường dẫn, sau đó tên duy nhất; báo thiếu/trùng trước khi tải.
-- Firebase Auth + Firestore tùy chọn để chuyển lựa chọn giữa thiết bị. Nút lưu/tải chủ động, kiểm tra revision bằng transaction để không ghi đè bản mới trên thiết bị khác. Dữ liệu cloud riêng theo UID; ảnh vẫn ở Drive.
+- Bắt buộc đăng nhập Google trước khi vào ứng dụng. Một lần đồng ý cấp quyền danh tính và đọc Drive; Firebase xác thực người dùng. Sau đăng nhập tự mở workspace đang dùng, hiển thị tên bộ ảnh và email tài khoản trên PC/điện thoại.
+- Mọi thay đổi loại ảnh, sao, yêu thích, điểm, ghi chú, gói và dữ liệu khôi phục tự đồng bộ Firestore. Web lưu trước vào IndexedDB riêng theo UID, gửi bản mới mỗi khoảng 500 ms, giữ hàng đợi khi mất mạng và tự gửi tiếp khi có mạng. Nhận cập nhật từ thiết bị khác qua onSnapshot và gộp các trường thay đổi bằng transaction để giữ những sửa đổi độc lập.
 - AI qua Firebase callable function tùy chọn: thu nhỏ JPEG 1280 px, loại metadata bằng canvas, nhóm tối đa 12, consent riêng, dừng sau nhóm hiện tại, lưu điểm của các nhóm hoàn tất và chỉ gán loại/sao/ghi chú sau khi duyệt.
 
 ## Deploy frontend bằng GitHub Actions
@@ -56,7 +57,7 @@ Trong Google Cloud project `image-choose`:
 3. Cấu hình OAuth consent screen, scope `https://www.googleapis.com/auth/drive.readonly`. Trong chế độ Testing, thêm email sử dụng vào Test users. Tài khoản đó cần được chia sẻ quyền đọc thư mục Drive. Khi phát hành rộng, làm quy trình xác minh scope của Google nếu được yêu cầu.
 4. Nếu dùng API key công khai: giới hạn API key theo **Google Drive API**, HTTP referrers `https://nvn41091.github.io/*` và localhost khi cần. API key không giúp truy cập Drive riêng tư. Firebase API key mặc định không tự được dùng làm Drive API key.
 
-Khi chưa kết nối Drive và chưa cấu hình API key, nút **Kết nối Google & mở ảnh** sẽ mở đăng nhập Google ngay từ lần bấm đó, chờ người dùng đồng ý quyền đọc rồi mới quét thư mục. Đăng nhập trong mục Đồng bộ Firebase chưa cấp quyền Drive. Khi token hết hạn, lần mở tiếp theo yêu cầu kết nối lại; token không được lưu vào localStorage hoặc backup. Nếu Google chặn trình duyệt nhúng của ứng dụng, mở website trực tiếp bằng Chrome/Safari và cho phép popup.
+Khi chưa kết nối Drive và chưa cấu hình API key, nút **Kết nối Google & mở ảnh** sẽ mở đăng nhập Google ngay từ lần bấm đó, chờ người dùng đồng ý quyền đọc rồi mới quét thư mục. Màn hình đăng nhập đầu ứng dụng dùng chung luồng cấp quyền Google Drive và Firebase. Khi token hết hạn, lần mở tiếp theo yêu cầu kết nối lại; token không được lưu vào localStorage hoặc backup. Nếu Google chặn trình duyệt nhúng của ứng dụng, mở website trực tiếp bằng Chrome/Safari và cho phép popup.
 
 [Google GIS token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model), [Drive files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list), [Drive resource keys](https://developers.google.com/workspace/drive/api/guides/resource-keys).
 
@@ -65,7 +66,7 @@ Khi chưa kết nối Drive và chưa cấu hình API key, nút **Kết nối Go
 Project `image-choose` đã được cấu hình trong phiên triển khai này: Google sign-in đã bật, domain `nvn41091.github.io` đã thêm, Firestore Standard `(default)` đã tạo tại `asia-southeast1`, rules trong repo đã xuất bản. Rules Playground đã kiểm tra: chưa đăng nhập bị chặn, đúng UID được đọc, UID khác bị chặn. Các bước dưới đây dùng khi dựng lại trên project khác. AI và Workload Identity Federation chưa được thiết lập.
 
 1. Firebase Console → project `image-choose` → Authentication → Sign-in method: bật Google và chọn support email của bạn.
-2. Authentication → Settings → Authorized domains: thêm `nvn41091.github.io` và `localhost` nếu test local. Đăng nhập Firebase và cấp quyền Drive là hai tác vụ riêng, vì quyền đọc Drive chỉ được xin khi mở ảnh.
+2. Authentication → Settings → Authorized domains: thêm `nvn41091.github.io` và `localhost` nếu test local. Màn hình đăng nhập dùng Google Identity Services xin openid/email/profile và drive.readonly, sau đó chuyển access token sang Firebase bằng GoogleAuthProvider.credential + signInWithCredential. Firebase xác thực danh tính cho rules theo UID.
 3. Tạo Cloud Firestore **Standard edition** `(default)`, production mode. Chọn vùng phù hợp, ví dụ `asia-southeast1`; cân nhắc trước vì vị trí database không đổi trực tiếp được.
 4. Triển khai `firebase/firestore.rules`. Không dùng rules công khai `allow read, write: if true`.
 
@@ -78,7 +79,7 @@ npx firebase-tools@14 deploy --only firestore:rules --project image-choose
 
 Hoặc cấu hình Google Workload Identity Federation cho repo, cho service account deploy quyền quản lý Firestore rules, rồi tạo repository Variables `FIREBASE_WIF_PROVIDER`, `FIREBASE_DEPLOY_SERVICE_ACCOUNT`. Chạy Actions → **Deploy optional Firebase backend**, bỏ tích `include_ai` để chỉ deploy rules. Workflow không lưu private key dài hạn. Cần tự cấp các quyền IAM phù hợp cho service account theo chức năng triển khai thực tế; không dùng JSON Service Account trong frontend.
 
-Ở PC bấm Đồng bộ → đăng nhập → Lưu lên Firebase; trên điện thoại đăng nhập cùng tài khoản → Tải về. Kết nối Drive trên mỗi thiết bị để xem ảnh riêng tư. Ảnh nhập từ máy không được upload lên Firestore; muốn xem trên máy khác hãy nhập backup kèm ảnh hoặc đưa ảnh lên Drive.
+Đăng nhập Google trên PC hoặc điện thoại bằng cùng tài khoản: workspace gần nhất tự mở, mọi thao tác lựa chọn tự lưu Firebase. Header luôn hiển thị workspace/email; mục Đồng bộ cho biết trạng thái và có nút thử lại. Khi tải lại trang, phiên Firebase được khôi phục; token Drive chỉ ở bộ nhớ nên có thể cần bấm Kết nối lại Google Drive để đọc ảnh riêng tư. Ảnh nhập từ máy không được upload lên Firestore; muốn xem trên máy khác hãy nhập backup kèm ảnh hoặc đưa ảnh lên Drive.
 
 ## AI tùy chọn
 
@@ -106,7 +107,9 @@ Chưa thể kiểm thử AI thật khi chưa có OpenAI secret, allowlist và Fi
 - Drive lần đầu tải nội dung ảnh để tạo thumbnail 640 px trong cache trên thiết bị; khi mở lớn lấy ảnh gốc. Có tải lười và giới hạn 4 yêu cầu ảnh đồng thời. Bộ hàng nghìn ảnh được chia 60 ảnh/trang để hạn chế RAM; không tải cả bộ ảnh cùng lúc.
 - JPEG/PNG/WebP tương thích tốt. TIFF phụ thuộc trình duyệt; chuyển ảnh xem trước sang JPG nếu không xem được. Web không decode RAW.
 - Giao diện tùy chỉnh từng thanh công cụ của Qt không được sao chép nguyên bộ; web có bố cục responsive, bộ lọc đóng/mở và chế độ tập trung.
-- Đồng bộ là lưu/tải snapshot chủ động, chưa phải chỉnh sửa cộng tác thời gian thực. Mỗi snapshot nén tối đa 900 KB trong Firestore; ảnh không nằm trong đó.
+- Đồng bộ tự động bằng snapshot nén tối đa 900 KB trong Firestore; ảnh không nằm trong đó. Transaction gộp thay đổi khác trường và cộng/trừ các loại ảnh; nếu hai thiết bị sửa cùng một trường, lần ghi sau thắng. Lưu ý hạn mức Firestore khi chọn số lượng rất lớn.
+- Workspace hiện tại lưu tại users/{uid}/settings/workspace, album tại users/{uid}/albums/{id}. Dữ liệu trên thiết bị nằm trong database IndexedDB riêng theo UID. Dữ liệu từ bản chưa đăng nhập được giữ nguyên và chỉ nhập vào tài khoản khi bấm Nhập dữ liệu cũ.
+- Các test trình duyệt dùng route mock Firebase/GIS ở dev server để kiểm tra đăng nhập, phân tách tài khoản, tự mở workspace, tự lưu, mất mạng và cập nhật giữa thiết bị. Bản production không có cờ bỏ qua đăng nhập.
 - Chưa có service worker/offline shell; cần mạng để mở website lần đầu, đọc Drive, đồng bộ và dùng AI.
 
 Không commit ảnh cá nhân, bản backup khách hàng, token, OpenAI key, Client Secret hoặc khóa admin lên repo.

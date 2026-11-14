@@ -25,6 +25,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Star,
+  LogOut,
   Sun,
   Moon,
   Upload,
@@ -53,6 +54,8 @@ import {
   listAlbums,
   saveAlbum,
   saveRecovery,
+  legacyCount,
+  importLegacy,
 } from './storage';
 import {
   driveNeedsLogin,
@@ -79,6 +82,9 @@ import type { CloudEntry, Recommendation } from './cloud';
 import { BusyContext, Modal } from './Modal';
 import { Viewer } from './Viewer';
 import { PhotoImage } from './PhotoImage';
+import { logoutGoogle, type Account } from './auth';
+import { useWorkspaceSync } from './useWorkspaceSync';
+import { mergeAlbum } from './sync';
 
 type Dialog =
   | ''
@@ -102,7 +108,7 @@ const sortOptions: [Sort, string][] = [
 ];
 const errorText = (e: unknown) =>
   e instanceof Error ? e.message : 'Có lỗi xảy ra. Vui lòng thử lại.';
-function App() {
+function App({ account }: { account: Account }) {
   const [albums, setAlbums] = useState<Album[]>([]),
     [album, setAlbum] = useState<Album | null>(null),
     [loaded, setLoaded] = useState(false);
@@ -142,7 +148,7 @@ function App() {
   const [backupImages, setBackupImages] = useState(false),
     [incoming, setIncoming] = useState<Backup | null>(null),
     [restoreMode, setRestoreMode] = useState('data');
-  const [cloudAccount, setCloudAccount] = useState(''),
+  const [cloudAccount, setCloudAccount] = useState(account.email || account.uid),
     [cloudAlbums, setCloudAlbums] = useState<CloudEntry[]>([]);
   const [aiScope, setAiScope] = useState('selection'),
     [criteria, setCriteria] = useState(
@@ -170,7 +176,22 @@ function App() {
     rawInput = useRef<HTMLInputElement>(null),
     anchor = useRef('');
   current.current = album;
+  const [legacyAlbums, setLegacyAlbums] = useState(0);
   const notify = (message: string, error = false) => setToast({ message, error });
+  const { retrySync } = useWorkspaceSync({
+    uid: account.uid,
+    album,
+    loaded,
+    writeAllowed,
+    current,
+    saveQueue,
+    setAlbum,
+    setAlbums,
+    setCloudAlbums,
+    setLoaded,
+    setSaveState,
+    notify,
+  });
   useEffect(() => {
     if (!toast) return;
     const timeout = setTimeout(() => setToast(null), toast.error ? 14000 : 5500);
@@ -207,20 +228,11 @@ function App() {
     };
   }, []);
   useEffect(() => {
-    listAlbums()
-      .then((items) => {
-        setAlbums(items);
-        setAlbum(
-          items.find((a) => a.id === localStorage.getItem('active-album')) || items[0] || null,
-        );
-        setLoaded(true);
-        setSaveState('Đã lưu trên thiết bị');
-      })
-      .catch((e) => {
-        notify('Không mở được lưu trữ trình duyệt: ' + errorText(e), true);
-        setLoaded(true);
-      });
     prepareDriveLogin().catch(() => {});
+    if (localStorage.getItem('legacy-imported:' + account.uid) !== 'true')
+      legacyCount()
+        .then(setLegacyAlbums)
+        .catch(() => {});
     const unload = (e: BeforeUnloadEvent) => {
       if (document.documentElement.dataset.unsaved === 'true') {
         e.preventDefault();
@@ -230,31 +242,6 @@ function App() {
     window.addEventListener('beforeunload', unload);
     return () => window.removeEventListener('beforeunload', unload);
   }, []);
-  useEffect(() => {
-    if (!loaded || !album || !writeAllowed) return;
-    localStorage.setItem('active-album', album.id);
-    document.documentElement.dataset.unsaved = 'true';
-    setSaveState('Đang lưu…');
-    const value = album;
-    saveQueue.current = saveQueue.current
-      .catch(() => {})
-      .then(async () => {
-        await saveAlbum(value);
-        if (current.current === value) {
-          setSaveState('Đã lưu trên thiết bị');
-          document.documentElement.dataset.unsaved = 'false';
-        }
-      })
-      .catch((e) => {
-        setSaveState('Chưa lưu được · tải backup ngay');
-        notify('Không lưu được trên thiết bị (có thể hết dung lượng): ' + errorText(e), true);
-      });
-    setAlbums((items) =>
-      [album, ...items.filter((a) => a.id !== album.id)].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
-      ),
-    );
-  }, [album, loaded, writeAllowed]);
   const run = async (label: string, work: () => Promise<void>) => {
     setBusy(label);
     try {
@@ -313,6 +300,16 @@ function App() {
       setReviews([]);
       setReviewChecked([]);
     }
+    if (cloudAlbums.some((a) => a.id === id))
+      void run('Đang mở workspace…', async () => {
+        const cloud = await import('./cloud');
+        const remote = await cloud.pullCloud(id);
+        setAlbum((cur) => (cur?.id === id ? mergeAlbum(cur, remote) : remote));
+        await cloud.rememberWorkspace(id);
+        setSelection([]);
+        setFolder('');
+        setTab('all');
+      });
   };
   const openPackage = () => {
     if (album) {
@@ -547,7 +544,7 @@ function App() {
     try {
       const cloud = await import('./cloud');
       if (!(await cloud.cloudReady()))
-        throw new Error('Đăng nhập Firebase trong mục Đồng bộ trước khi dùng AI.');
+        throw new Error('Phiên đăng nhập đã hết hạn. Đăng nhập Google lại để tiếp tục.');
       for (let i = 0; i < paths.length; i += 12) {
         if (stopAi.current) break;
         const batch: { path: string; data: string }[] = [];
@@ -712,7 +709,10 @@ function App() {
             </span>
           </a>
           <div className="header-divider" />
-          <span className="workspace-label">Không gian của bạn</span>
+          <div className="workspace-identity">
+            <strong>{album?.name || 'Workspace của bạn'}</strong>
+            <small>{account.email}</small>
+          </div>
           <div className="header-actions">
             <button
               className="text-button cloud-header"
@@ -752,10 +752,27 @@ function App() {
               aria-label="Hướng dẫn sử dụng"
               onClick={() => setDialog('help')}
             >
-              KK
+              {(account.displayName || account.email || 'G').slice(0, 2).toUpperCase()}
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Đăng xuất Google"
+              title={account.email || 'Đăng xuất'}
+              onClick={() =>
+                void run('Đang đăng xuất…', async () => {
+                  await saveQueue.current;
+                  await logoutGoogle();
+                })
+              }
+            >
+              <LogOut size={18} />
             </button>
           </div>
         </header>
+        <div className="mobile-workspace-identity">
+          <strong>{album?.name || 'Workspace của bạn'}</strong>
+          <span>{account.email}</span>
+        </div>
         <div className="workspace">
           <aside className="sidebar">
             <div className="sidebar-title">
@@ -829,6 +846,16 @@ function App() {
                   </button>
                 </div>
               ))}
+              {cloudAlbums
+                .filter((a) => !albums.some((local) => local.id === a.id))
+                .map((a) => (
+                  <div key={a.id} className="album-row">
+                    <button onClick={() => switchAlbum(a.id)}>
+                      <Cloud size={16} />
+                      <span>{a.name}</span>
+                    </button>
+                  </div>
+                ))}
               <button className="add-album" onClick={openDrive}>
                 <Plus size={16} /> Mở link Google Drive
               </button>
@@ -1394,6 +1421,38 @@ function App() {
                 </div>
               </>
             )}
+            {legacyAlbums > 0 && (
+              <div className="connection-card">
+                <Upload size={22} />
+                <div>
+                  <strong>{legacyAlbums} bộ ảnh từ bản chưa đăng nhập</strong>
+                  <small>
+                    Nhập dữ liệu cũ vào workspace của tài khoản {account.email}. Bản cũ vẫn được giữ
+                    trên thiết bị.
+                  </small>
+                </div>
+                <button
+                  className="button subtle"
+                  onClick={() =>
+                    void run('Đang nhập dữ liệu trên thiết bị…', async () => {
+                      const items = await importLegacy();
+                      setAlbums(items);
+                      if (items[0]) setAlbum(items[0]);
+                      setLegacyAlbums(0);
+                      localStorage.setItem('legacy-imported:' + account.uid, 'true');
+                    })
+                  }
+                >
+                  Nhập dữ liệu cũ
+                </button>
+              </div>
+            )}
+            {!loaded && (
+              <div className="empty-results" role="status">
+                <LoaderCircle className="spinner" />
+                <p>Đang mở workspace của bạn…</p>
+              </div>
+            )}
             {!album && loaded && (
               <section className="welcome">
                 <div className="welcome-art">
@@ -1435,7 +1494,7 @@ function App() {
                 <div className="welcome-features">
                   <span>
                     <Check size={14} />
-                    Tự lưu lựa chọn
+                    Tự động đồng bộ
                   </span>
                   <span>
                     <Check size={14} />
@@ -1480,7 +1539,7 @@ function App() {
                 )}
                 <strong className="focused-name">{focused?.name || selectedLabel}</strong>
                 <p className="focused-path">
-                  {focused?.path || 'Các thay đổi sẽ tự lưu trên thiết bị'}
+                  {focused?.path || 'Các thay đổi sẽ tự lưu và đồng bộ Firebase'}
                 </p>
                 <div className="inspector-section">
                   <label className="field-title">
@@ -1584,7 +1643,9 @@ function App() {
                     value={focusedPhoto?.note || ''}
                     onChange={(e) => edit(selection, { note: e.target.value })}
                   />
-                  <small className="hint">Studio sẽ nhận ghi chú khi bạn xuất danh sách.</small>
+                  <small className="hint">
+                    Ghi chú tự đồng bộ và được gửi kèm khi xuất cho studio.
+                  </small>
                 </div>
                 <button
                   className="button subtle full-width"
@@ -1776,8 +1837,8 @@ function App() {
                 </button>
               </div>
               <p className="hint">
-                Nút mở ảnh sẽ yêu cầu kết nối Google nếu bạn chưa cấp quyền Drive. Đăng nhập ở mục
-                Đồng bộ Firebase chỉ đồng bộ lựa chọn, chưa cấp quyền đọc ảnh. Thư mục công khai
+                Nút mở ảnh sẽ yêu cầu kết nối Google nếu bạn chưa cấp quyền Drive. Đăng nhập Google
+                đã cấp quyền Drive; nếu phiên hết hạn, bạn có thể kết nối lại. Thư mục công khai
                 cũng có thể mở bằng API key trong Cấu hình.
               </p>
               <p className="hint">
@@ -2180,116 +2241,46 @@ function App() {
           </Modal>
         )}
         {dialog === 'cloud' && (
-          <Modal title="Tiếp tục trên mọi thiết bị" onClose={() => setDialog('')}>
+          <Modal title="Đồng bộ tự động" onClose={() => setDialog('')}>
+            <div className="signed-in">
+              <span className="status-dot" />
+              {account.email}
+            </div>
             <p className="dialog-intro">
-              Đồng bộ lựa chọn qua Firebase theo tài khoản Google của bạn. Ảnh gốc vẫn ở Drive;
-              backup ảnh trên thiết bị cần nhập lại nếu chuyển máy.
+              Mọi thay đổi loại ảnh, sao, yêu thích, điểm, ghi chú và gói ảnh được tự động lưu lên
+              Firebase theo tài khoản này.
             </p>
-            {cloudAccount ? (
-              <div className="signed-in">
-                <span className="status-dot" />
-                {cloudAccount}
+            <div className="sync-state" role="status">
+              {saveState}
+            </div>
+            <button className="button subtle full-width" onClick={retrySync}>
+              Đồng bộ ngay / thử lại
+            </button>
+            <p className="hint">
+              Khi mất mạng, thay đổi được giữ trên thiết bị và tự gửi tiếp khi có kết nối. Ảnh gốc
+              vẫn ở Drive. Bộ ảnh nhập từ máy cần backup kèm ảnh để xem trên thiết bị khác.
+            </p>
+            <div className="section-heading">Workspace của bạn</div>
+            {cloudAlbums.map((item) => (
+              <div className="cloud-album" key={item.id}>
+                <Folder size={22} />
+                <div>
+                  <strong>{item.name}</strong>
+                  <small>
+                    {new Date(item.updatedAt).toLocaleString('vi')} · bản {item.revision}
+                  </small>
+                </div>
                 <button
-                  className="text-button"
-                  onClick={() =>
-                    void run('Đang đăng xuất…', async () => {
-                      await (await import('./cloud')).cloudLogout();
-                      setCloudAccount('');
-                      setCloudAlbums([]);
-                    })
-                  }
+                  className="button subtle"
+                  onClick={() => {
+                    switchAlbum(item.id);
+                    setDialog('');
+                  }}
                 >
-                  Đăng xuất
+                  Mở workspace
                 </button>
               </div>
-            ) : (
-              <button
-                className="button primary full-width"
-                onClick={() =>
-                  void run('Đang đăng nhập đồng bộ…', async () => {
-                    const c = await import('./cloud');
-                    const result = await c.cloudLogin();
-                    setCloudAccount(result.user.email || result.user.uid);
-                    setCloudAlbums(await c.listCloudAlbums());
-                  })
-                }
-              >
-                Đăng nhập Google để đồng bộ
-              </button>
-            )}
-            {cloudAccount && (
-              <>
-                <button
-                  className="button primary full-width"
-                  disabled={!album}
-                  onClick={() =>
-                    void run('Đang lưu lên Firebase…', async () => {
-                      const c = await import('./cloud');
-                      const next = await c.pushCloud(album!);
-                      setAlbum(next);
-                      setCloudAlbums(await c.listCloudAlbums());
-                      notify('Đã lưu lựa chọn lên Firebase.');
-                    })
-                  }
-                >
-                  <Cloud size={16} />
-                  Lưu bộ ảnh hiện tại lên Firebase
-                </button>
-                <div className="section-heading">
-                  Bộ ảnh trên Firebase
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      void run('Đang tải danh sách…', async () =>
-                        setCloudAlbums(await (await import('./cloud')).listCloudAlbums()),
-                      )
-                    }
-                  >
-                    Tải lại
-                  </button>
-                </div>
-                {cloudAlbums.map((item) => (
-                  <div className="cloud-album" key={item.id}>
-                    <Folder size={22} />
-                    <div>
-                      <strong>{item.name}</strong>
-                      <small>
-                        {new Date(item.updatedAt).toLocaleString('vi')} · bản {item.revision}
-                      </small>
-                    </div>
-                    <button
-                      className="button subtle"
-                      onClick={() => {
-                        if (
-                          !confirm(
-                            'Tải bản Firebase về? Dữ liệu cùng bộ ảnh trên thiết bị sẽ được thay thế và giữ một bản trước khôi phục.',
-                          )
-                        )
-                          return;
-                        void run('Đang tải bản Firebase…', async () => {
-                          const next = await (await import('./cloud')).pullCloud(item.id);
-                          const previous = albums.find((a) => a.id === next.id);
-                          if (previous) await saveRecovery(previous);
-                          setAlbum(next);
-                          setSelection([]);
-                          setFolder('');
-                          setTab('all');
-                          setDialog('');
-                          notify('Đã tải lựa chọn. Kết nối Google Drive để xem ảnh riêng tư.');
-                        });
-                      }}
-                    >
-                      Tải về
-                    </button>
-                  </div>
-                ))}
-              </>
-            )}
-            <p className="hint">
-              Lưu và tải là thao tác chủ động. Nếu thiết bị khác đã cập nhật, web sẽ yêu cầu tải bản
-              cloud trước để tránh ghi đè. Đây là bản lưu riêng của tài khoản, không phải album chia
-              sẻ cộng tác.
-            </p>
+            ))}
           </Modal>
         )}
         {dialog === 'ai' && album && (
@@ -2587,8 +2578,9 @@ function App() {
               </li>
               <li>Bấm Hoàn tất & xuất để tải Excel, Lightroom và JSON gửi studio.</li>
               <li>
-                Dùng Đồng bộ để lưu lựa chọn lên Firebase và tải về trên thiết bị khác. Tải backup
-                định kỳ; xóa dữ liệu trình duyệt sẽ xóa bản lưu trên thiết bị.
+                Mọi lựa chọn tự đồng bộ Firebase và mở lại theo tài khoản Google. Khi mất mạng, web
+                giữ thay đổi trên thiết bị và gửi tiếp khi có kết nối. Tải backup định kỳ cho bộ ảnh
+                gốc.
               </li>
             </ol>
             <div className="shortcut-list">

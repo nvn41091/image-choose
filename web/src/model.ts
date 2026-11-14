@@ -37,7 +37,12 @@ export interface Album {
   updatedAt: string;
   cloudRevision?: number;
   cloudUid?: string;
+  cloudBase?: AlbumContent;
 }
+export type AlbumContent = Pick<
+  Album,
+  'id' | 'name' | 'source' | 'driveUrl' | 'entries' | 'project'
+>;
 export const defaults: Category[] = [
   { id: 'album', name: 'Album', color: '#426b59', shortcut: 1, max_count: null },
   { id: 'phong_lon', name: 'Phóng lớn', color: '#b46553', shortcut: 2, max_count: null },

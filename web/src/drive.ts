@@ -57,7 +57,7 @@ export function driveSignedIn() {
 export function driveNeedsLogin() {
   return !driveSignedIn() && (!!accessToken || !getConfig().googleApiKey.trim());
 }
-export function signInDrive(): Promise<void> {
+export function signInDrive(): Promise<string> {
   const id = getConfig().googleClientId.trim();
   if (!id) return Promise.reject(new Error('Mở Cấu hình để nhập Google OAuth Client ID.'));
   const oauth = googleOAuth();
@@ -68,11 +68,11 @@ export function signInDrive(): Promise<void> {
       );
     });
   // requestAccessToken must run in the original click event on mobile browsers.
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     oauth
       .initTokenClient({
         client_id: id,
-        scope,
+        scope: `openid email profile ${scope}`,
         callback: (reply) => {
           if (reply.error || !oauth.hasGrantedAllScopes(reply, scope)) {
             accessToken = '';
@@ -92,7 +92,7 @@ export function signInDrive(): Promise<void> {
           accessToken = reply.access_token;
           expiresAt = Date.now() + Number(reply.expires_in) * 1000 - 30000;
           window.dispatchEvent(new Event(DRIVE_SESSION_EVENT));
-          resolve();
+          resolve(accessToken);
         },
         error_callback: (error) =>
           reject(
@@ -105,6 +105,10 @@ export function signInDrive(): Promise<void> {
       })
       .requestAccessToken({ prompt: '' });
   });
+}
+export function clearDriveSession() {
+  accessToken = '';
+  expiresAt = 0;
 }
 export async function signOutDrive() {
   const token = accessToken;

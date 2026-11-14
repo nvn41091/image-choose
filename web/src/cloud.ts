@@ -1,5 +1,10 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { GoogleAuthProvider, getAuth, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  firebaseApp as app,
+  currentAccount,
+  accountReady,
+  loginGoogle,
+  logoutGoogle,
+} from './auth';
 import {
   collection,
   doc,
@@ -8,31 +13,19 @@ import {
   getFirestore,
   runTransaction,
   serverTimestamp,
+  setDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate';
 import { getConfig } from './config';
 import { parseProject, relativeKey, type Album } from './model';
+import { albumContent, mergeAlbum } from './sync';
 
-function app() {
-  const config = getConfig();
-  if (!config.firebaseConfig.trim())
-    throw new Error('Chưa cấu hình Firebase. Bạn vẫn có thể dùng backup và lưu trên thiết bị.');
-  return getApps()[0] || initializeApp(JSON.parse(config.firebaseConfig));
-}
-export function cloudUser(): User | null {
-  return getAuth(app()).currentUser;
-}
-export function cloudLogin() {
-  return signInWithPopup(getAuth(app()), new GoogleAuthProvider());
-}
-export function cloudLogout() {
-  return signOut(getAuth(app()));
-}
-export async function cloudReady() {
-  await getAuth(app()).authStateReady();
-  return cloudUser();
-}
+export const cloudUser = currentAccount;
+export const cloudLogin = loginGoogle;
+export const cloudLogout = logoutGoogle;
+export const cloudReady = accountReady;
 export interface CloudEntry {
   id: string;
   name: string;
@@ -49,7 +42,7 @@ export async function listCloudAlbums(): Promise<CloudEntry[]> {
 function encode(album: Album) {
   // Only metadata and Drive references are synced. No image bytes or OAuth tokens.
   const bytes = gzipSync(
-    strToU8(JSON.stringify({ ...album, cloudRevision: undefined, cloudUid: undefined })),
+    strToU8(JSON.stringify({ ...albumContent(album), updatedAt: album.updatedAt })),
   );
   let binary = '';
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
@@ -61,34 +54,39 @@ function encode(album: Album) {
 export async function pushCloud(album: Album): Promise<Album> {
   const user = cloudUser();
   if (!user) throw new Error('Đăng nhập đồng bộ bằng Google trước.');
-  const payload = encode(album),
-    ref = doc(getFirestore(app()), 'users', user.uid, 'albums', album.id);
-  const revision = await runTransaction(getFirestore(app()), async (tx) => {
+  const ref = doc(getFirestore(app()), 'users', user.uid, 'albums', album.id);
+  const saved = await runTransaction(getFirestore(app()), async (tx) => {
     const current = await tx.get(ref);
     const latest = current.exists() ? current.data().revision : 0;
-    const expected = album.cloudUid === user.uid ? album.cloudRevision || 0 : 0;
-    if (latest !== expected)
-      throw new Error(
-        'Bản trên Firebase đã thay đổi. Tải bản cloud về trước để tránh ghi đè lựa chọn từ thiết bị khác.',
-      );
+    const merged = current.exists()
+      ? mergeAlbum(album, decodeAlbum(album.id, current.data(), user.uid))
+      : album;
+    const payload = encode(merged);
     tx.set(ref, {
-      name: album.name,
+      name: merged.name,
       payload,
       revision: latest + 1,
       updatedAt: new Date().toISOString(),
       savedAt: serverTimestamp(),
     });
-    return latest + 1;
+    return {
+      ...merged,
+      cloudRevision: latest + 1,
+      cloudUid: user.uid,
+      cloudBase: albumContent(merged),
+    };
   });
-  return { ...album, cloudRevision: revision, cloudUid: user.uid };
+  return saved;
 }
 export async function pullCloud(id: string): Promise<Album> {
   const user = cloudUser();
   if (!user) throw new Error('Đăng nhập đồng bộ trước.');
   const result = await getDoc(doc(getFirestore(app()), 'users', user.uid, 'albums', id));
   if (!result.exists()) throw new Error('Không tìm thấy album trên Firebase.');
-  const data = result.data(),
-    bytes = Uint8Array.from(atob(data.payload), (c) => c.charCodeAt(0));
+  return decodeAlbum(id, result.data(), user.uid);
+}
+function decodeAlbum(id: string, data: Record<string, unknown>, uid: string): Album {
+  const bytes = Uint8Array.from(atob(String(data.payload)), (c) => c.charCodeAt(0));
   // Bound decompression before gunzip to avoid oversized data in a browser.
   const declared = new DataView(bytes.buffer).getUint32(bytes.length - 4, true);
   if (declared > 16 * 1024 * 1024) throw new Error('Dữ liệu cloud vượt giới hạn 16 MB.');
@@ -105,12 +103,59 @@ export async function pullCloud(id: string): Promise<Album> {
     if (typeof e.name !== 'string' || (e.id !== undefined && !/^[\w-]{1,200}$/.test(e.id)))
       throw new Error('Danh sách ảnh cloud không hợp lệ.');
   }
-  return {
+  const result: Album = {
     ...album,
     project: parseProject(album.project),
-    cloudRevision: data.revision,
-    cloudUid: user.uid,
+    cloudRevision: Number(data.revision),
+    cloudUid: uid,
   };
+  result.cloudBase = albumContent(result);
+  return result;
+}
+export async function activeWorkspace() {
+  const user = cloudUser();
+  if (!user) return '';
+  const snapshot = await getDoc(
+    doc(getFirestore(app()), 'users', user.uid, 'settings', 'workspace'),
+  );
+  return snapshot.exists() ? String(snapshot.data().activeAlbumId || '') : '';
+}
+export async function rememberWorkspace(id: string) {
+  const user = cloudUser();
+  if (!user) throw new Error('Cần đăng nhập.');
+  await setDoc(doc(getFirestore(app()), 'users', user.uid, 'settings', 'workspace'), {
+    activeAlbumId: id,
+    updatedAt: serverTimestamp(),
+  });
+}
+export function observeWorkspaces(
+  next: (items: CloudEntry[], changed: Album[]) => void,
+  error: (error: Error) => void,
+) {
+  const user = cloudUser();
+  if (!user) throw new Error('Cần đăng nhập.');
+  return onSnapshot(
+    collection(getFirestore(app()), 'users', user.uid, 'albums'),
+    (snapshot) => {
+      try {
+        next(
+          snapshot.docs.map((d) => ({
+            id: d.id,
+            name: d.data().name,
+            updatedAt: d.data().updatedAt,
+            revision: d.data().revision,
+          })),
+          snapshot
+            .docChanges()
+            .filter((c) => c.type !== 'removed')
+            .map((c) => decodeAlbum(c.doc.id, c.doc.data(), user.uid)),
+        );
+      } catch (e) {
+        error(e as Error);
+      }
+    },
+    error,
+  );
 }
 export interface Recommendation {
   path: string;
