@@ -1,6 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { blankProject, updatePhotos } from '../../src/model';
 
+test('sync remains accessible when the mobile header hides its text', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Đồng bộ', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tiếp tục trên mọi thiết bị' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Đăng nhập Google để đồng bộ', exact: true }),
+  ).toBeVisible();
+});
+
 test('restore PC choices, select, compare, save, export and reopen', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -25,13 +34,11 @@ test('restore PC choices, select, compare, save, export and reopen', async ({ pa
     'images/one.png': new Uint8Array(png),
     'images/two.png': new Uint8Array(png),
   });
-  await page
-    .locator('input[accept=".zip,.json"]')
-    .setInputFiles({
-      name: 'backup-pc.zip',
-      mimeType: 'application/zip',
-      buffer: Buffer.from(backup),
-    });
+  await page.locator('input[accept=".zip,.json"]').setInputFiles({
+    name: 'backup-pc.zip',
+    mimeType: 'application/zip',
+    buffer: Buffer.from(backup),
+  });
   await expect(page.getByRole('heading', { name: 'Kiểm tra bản khôi phục' })).toBeVisible();
   await page.getByRole('button', { name: 'Khôi phục lựa chọn', exact: true }).click();
   await expect(page.locator('.photo-card')).toHaveCount(2);

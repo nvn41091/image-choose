@@ -707,6 +707,7 @@ function App() {
           <div className="header-actions">
             <button
               className="text-button cloud-header"
+              aria-label="Đồng bộ"
               onClick={() => {
                 setDialog('cloud');
                 void run('Đang mở đồng bộ…', async () => {
