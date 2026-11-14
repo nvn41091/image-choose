@@ -64,6 +64,7 @@ export function inspectZip(bytes: Uint8Array) {
   )
     throw new Error('ZIP64 hoặc ZIP nhiều phần chưa được hỗ trợ. Chia thành bản backup nhỏ hơn.');
   const names = new Set<string>();
+  const records = new Map<string, { size: number; crc: number }>();
   for (let i = 0; i < count; i++) {
     if (offset + 46 > end || view.getUint32(offset, true) !== 0x02014b50)
       throw new Error('Mục lục ZIP bị hỏng.');
@@ -80,6 +81,7 @@ export function inspectZip(bytes: Uint8Array) {
     )
       throw new Error('ZIP chứa tệp trùng, liên kết hoặc mã hóa.');
     names.add(name.toLowerCase());
+    records.set(name, { size, crc: view.getUint32(offset + 16, true) });
     if (name === 'photo_tags.json' || name === 'backup.json') {
       if (size > MAX_METADATA) throw new Error('JSON trong ZIP vượt 16 MB.');
     } else if (name.startsWith('images/')) safeImagePath(name.slice(7));
@@ -92,7 +94,23 @@ export function inspectZip(bytes: Uint8Array) {
     offset += 46 + length + extra + comment;
   }
   if (!names.has('photo_tags.json')) throw new Error('ZIP thiếu photo_tags.json.');
-  return names;
+  for (const name of names) {
+    const parts = name.split('/');
+    for (let index = 1; index < parts.length; index++)
+      if (names.has(parts.slice(0, index).join('/')))
+        throw new Error('Đường dẫn ảnh trong ZIP xung đột.');
+  }
+  return records;
+}
+const crcTable = Uint32Array.from({ length: 256 }, (_, number) => {
+  let c = number;
+  for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = crcTable[(crc ^ byte) & 255] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
 }
 export async function readBackup(file: File): Promise<Backup> {
   if (file.size > MAX_ARCHIVE)
@@ -107,10 +125,16 @@ export async function readBackup(file: File): Promise<Backup> {
     };
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
-  inspectZip(bytes);
+  const records = inspectZip(bytes);
   const unpacked = await new Promise<Record<string, Uint8Array>>((resolve, reject) =>
     unzip(bytes, {}, (e, d) => (e ? reject(new Error('Không giải nén được backup.')) : resolve(d))),
   );
+  if (Object.keys(unpacked).length !== records.size) throw new Error('Mục lục ZIP không khớp.');
+  for (const [name, data] of Object.entries(unpacked)) {
+    const record = records.get(name);
+    if (!record || data.length !== record.size || crc32(data) !== record.crc)
+      throw new Error('Backup bị hỏng hoặc không khớp checksum.');
+  }
   const project = parseProject(decodeJSON(unpacked['photo_tags.json']));
   const images = new Map<string, Blob>();
   for (const [name, data] of Object.entries(unpacked))
@@ -146,8 +170,11 @@ export async function createBackup(
   includeImages: boolean,
   progress: (s: string) => void,
 ) {
+  parseProject(album.project);
+  const metadata = strToU8(JSON.stringify(album.project, null, 2));
+  if (metadata.length > MAX_METADATA) throw new Error('Dữ liệu lựa chọn vượt giới hạn 16 MB.');
   const files: Zippable = {
-    'photo_tags.json': strToU8(JSON.stringify(album.project, null, 2)),
+    'photo_tags.json': metadata,
     'backup.json': strToU8(
       JSON.stringify({
         backup_version: 1,

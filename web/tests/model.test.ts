@@ -94,6 +94,23 @@ describe('desktop compatibility', () => {
   });
 });
 describe('backups and exports', () => {
+  it('rejects a damaged ZIP even when its JSON parses', async () => {
+    const bytes = zipSync(
+      { 'photo_tags.json': strToU8(JSON.stringify(blankProject())) },
+      { level: 0 },
+    );
+    const marker = strToU8('Album');
+    let found = false;
+    for (let i = 30; i < bytes.length - marker.length; i++) {
+      if (marker.every((value, j) => bytes[i + j] === value)) {
+        bytes[i] = 'B'.charCodeAt(0);
+        found = true;
+        break;
+      }
+    }
+    expect(found).toBe(true);
+    await expect(readBackup(new File([bytes], 'broken.zip'))).rejects.toThrow('checksum');
+  });
   it('imports a desktop ZIP with photos, note and score', async () => {
     const p = updatePhotos(blankProject(), ['Thư mục/a.jpg'], () => ({
       note: 'giữ màu',

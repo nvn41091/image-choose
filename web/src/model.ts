@@ -162,7 +162,7 @@ export function updatePhotos(
   paths: string[],
   change: (p: Photo) => Partial<Photo>,
 ): Project {
-  const photos = { ...project.photos };
+  const photos: Record<string, Photo> = Object.assign(Object.create(null), project.photos);
   for (const path of paths)
     photos[path] = {
       ...photoAt(project, path),
