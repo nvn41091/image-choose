@@ -60,6 +60,8 @@ Trong Google Cloud project `image-choose`:
 
 ## Thiết lập Firebase đồng bộ (không cần server riêng)
 
+Project `image-choose` đã được cấu hình trong phiên triển khai này: Google sign-in đã bật, domain `nvn41091.github.io` đã thêm, Firestore Standard `(default)` đã tạo tại `asia-southeast1`, rules trong repo đã xuất bản. Rules Playground đã kiểm tra: chưa đăng nhập bị chặn, đúng UID được đọc, UID khác bị chặn. Các bước dưới đây dùng khi dựng lại trên project khác. AI và Workload Identity Federation chưa được thiết lập.
+
 1. Firebase Console → project `image-choose` → Authentication → Sign-in method: bật Google và chọn support email của bạn.
 2. Authentication → Settings → Authorized domains: thêm `nvn41091.github.io` và `localhost` nếu test local. Đăng nhập Firebase và cấp quyền Drive là hai tác vụ riêng, vì quyền đọc Drive chỉ được xin khi mở ảnh.
 3. Tạo Cloud Firestore **Standard edition** `(default)`, production mode. Chọn vùng phù hợp, ví dụ `asia-southeast1`; cân nhắc trước vì vị trí database không đổi trực tiếp được.
